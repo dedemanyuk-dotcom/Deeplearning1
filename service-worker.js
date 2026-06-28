@@ -1,17 +1,17 @@
 // ============================================================
 // SERVICE WORKER - Deep Learning SD
-// Versi: 1.0.1 (Bug Fix Cache Data)
+// Versi: 1.0.3 (Update Path ke data.js)
 // Fungsi: Cache aset untuk offline mode dan PWA
 // ============================================================
 
-const CACHE_NAME = 'deep-learning-sd-v1.1'; // Versi cache dinaikkan untuk force update
+const CACHE_NAME = 'deep-learning-sd-v1.3'; 
 const STATIC_ASSETS = [
   './',
   './index.html',
   './style.css',
   './script.js',
   './manifest.json',
-  './assets/data/data.js', // FIX: Data materi dan soal ditambahkan ke cache
+  './data.js', // FIX: Update menggunakan huruf kecil
   'https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js',
   'https://html2canvas.hertzen.com/dist/html2canvas.min.js',
