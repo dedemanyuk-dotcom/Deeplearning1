@@ -111,10 +111,13 @@ body {
 }
 
 #splash-screen.hidden {
-  opacity: 0;
-  pointer-events: none;
-  transform: scale(1.05);
+  opacity: 0 !important;
+  pointer-events: none !important;
+  transform: scale(1.05) !important;
+  visibility: hidden;
+  transition: opacity 0.5s ease, transform 0.5s ease, visibility 0s 0.5s;
 }
+
 
 .splash-logo {
   font-size: 80px;
