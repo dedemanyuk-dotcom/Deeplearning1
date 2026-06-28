@@ -24,7 +24,7 @@ let State = {
     daysActive: 0
   },
   history: {
-    activities: [], // { id, title, type, score, date }
+    activities: [], 
     quizzes: [],
     journal: [],
     dlDrafts: {}
@@ -35,10 +35,10 @@ let State = {
     sfx: true,
     volume: 70
   },
-  badges: [] // ID badge yang sudah didapat
+  badges: [] 
 };
 
-// --- AUDIO SYSTEM (Web Audio API - Tanpa File Eksternal) ---
+// --- AUDIO SYSTEM (Web Audio API) ---
 const AudioSystem = {
   ctx: null,
   init() { if (!this.ctx) this.ctx = new (window.AudioContext || window.webkitAudioContext)(); },
@@ -92,7 +92,7 @@ const Utils = {
   },
   addActivity(title, type, score = 0) {
     State.history.activities.unshift({ id: Date.now(), title, type, score, date: new Date().toISOString() });
-    if (State.history.activities.length > 50) State.history.activities.pop(); // Batasi 50
+    if (State.history.activities.length > 50) State.history.activities.pop(); 
     this.saveDB();
     App.updateDashboard();
   },
@@ -120,7 +120,13 @@ const App = {
     Utils.loadDB();
     this.initClock();
     
-    // Setup Service Worker
+    // Check jika data.js berhasil diload
+    if (typeof APP_DATA === 'undefined') {
+      console.error("APP_DATA tidak ditemukan! Pastikan file data.js terhubung dengan benar di index.html");
+      Utils.showToast("Gagal memuat data pelajaran. Cek koneksi atau file data.js", "error");
+      return;
+    }
+
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('./service-worker.js').catch(console.error);
     }
@@ -189,16 +195,13 @@ const App = {
 
   navigate(pageId) {
     AudioSystem.click();
-    // Tutup sidebar di mobile
     document.getElementById('sidebar').classList.remove('open');
     document.getElementById('sidebar-overlay').classList.remove('active');
 
-    // Update Nav
     document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
     const activeNav = document.querySelector(`.nav-item[data-page="${pageId}"]`);
     if(activeNav) activeNav.classList.add('active');
 
-    // Tampilkan page
     document.querySelectorAll('.page').forEach(el => el.classList.remove('active'));
     document.getElementById(`page-${pageId}`).classList.add('active');
     window.scrollTo(0,0);
@@ -217,6 +220,7 @@ const App = {
     if(pageId === 'settings') Settings.init();
     if(pageId === 'calendar') Calendar.init();
     if(pageId === 'portfolio') Portfolio.init();
+    if(pageId === 'target') Target.init();
   },
 
   toggleSidebar() {
@@ -238,8 +242,11 @@ const App = {
   initClock() {
     setInterval(() => {
       const now = new Date();
-      document.getElementById('clock').textContent = now.toLocaleTimeString('id-ID', { hour12: false });
-      document.getElementById('date-display').textContent = Utils.formatDate(now);
+      const clockEl = document.getElementById('clock');
+      if(clockEl) {
+        clockEl.textContent = now.toLocaleTimeString('id-ID', { hour12: false });
+        document.getElementById('date-display').textContent = Utils.formatDate(now);
+      }
     }, 1000);
   },
 
@@ -247,7 +254,6 @@ const App = {
     State.user.xp += amount;
     State.user.points += Math.floor(amount / 2);
     
-    // Check Level Up
     const oldLevel = State.user.level;
     const currentLevelObj = APP_DATA.levels.find(l => State.user.xp < l.maxXP) || APP_DATA.levels[APP_DATA.levels.length-1];
     State.user.level = currentLevelObj.level;
@@ -267,7 +273,6 @@ const App = {
     const s = State.stats;
     const lvObj = APP_DATA.levels.find(l => l.level === u.level);
 
-    // Hero & Header
     document.getElementById('hero-name').textContent = u.name;
     document.getElementById('hero-class').textContent = u.class;
     document.getElementById('hero-avatar').textContent = u.avatar;
@@ -276,7 +281,6 @@ const App = {
     document.getElementById('sidebar-name').textContent = u.name;
     document.getElementById('sidebar-class').textContent = u.class;
 
-    // Stats
     document.getElementById('dash-poin').textContent = u.points;
     document.getElementById('dash-streak').textContent = u.streak;
     document.getElementById('dash-quiz').textContent = s.quizCompleted;
@@ -287,7 +291,6 @@ const App = {
     document.getElementById('stat-badges').textContent = State.badges.length;
     document.getElementById('stat-days').textContent = s.daysActive;
 
-    // XP Bar
     const xpBase = lvObj.minXP;
     const xpReq = lvObj.maxXP;
     const progress = Math.min(100, ((u.xp - xpBase) / (xpReq - xpBase)) * 100);
@@ -300,11 +303,23 @@ const App = {
     document.getElementById('dash-xp-info').textContent = `${u.xp} / ${xpReq} XP`;
     document.getElementById('sidebar-xp').textContent = `${u.xp} XP`;
 
-    // Motivation
     const dailyMot = APP_DATA.dailyMotivation[new Date().getDay() % APP_DATA.dailyMotivation.length];
     document.getElementById('hero-motivation').textContent = dailyMot;
+    
+    const targetList = document.getElementById('daily-target-list');
+    if (targetList) {
+      targetList.innerHTML = `
+        <div class="checklist-item done"><div class="checklist-checkbox">✓</div><div class="checklist-label">Login hari ini</div></div>
+        <div class="checklist-item ${s.quizCompleted > 0 ? 'done' : ''}"><div class="checklist-checkbox">${s.quizCompleted > 0 ? '✓' : ''}</div><div class="checklist-label">Selesaikan 1 Quiz</div></div>
+        <div class="checklist-item ${s.topicsRead > 0 ? 'done' : ''}"><div class="checklist-checkbox">${s.topicsRead > 0 ? '✓' : ''}</div><div class="checklist-label">Baca 1 Materi</div></div>
+      `;
+      let completed = 1;
+      if (s.quizCompleted > 0) completed++;
+      if (s.topicsRead > 0) completed++;
+      document.getElementById('daily-target-progress').style.width = `${(completed/3)*100}%`;
+      document.getElementById('daily-target-text').textContent = `${completed} / 3 target selesai`;
+    }
 
-    // Recent Activity
     const actContainer = document.getElementById('recent-activity');
     if (State.history.activities.length === 0) {
       actContainer.innerHTML = `<div class="empty-state"><span class="empty-state-emoji">📭</span><div>Belum ada aktivitas</div></div>`;
@@ -388,11 +403,12 @@ const Materi = {
     document.getElementById('materi-view-topics').classList.add('hidden');
     document.getElementById('materi-view-detail').classList.remove('hidden');
     
+    const safeTitle = topic.title.replace(/'/g, "\\'");
     const content = `
       <h2 class="page-title mt-2 mb-2">${topic.title}</h2>
       <div class="chip chip-primary mb-4">${subject.name}</div>
       <div class="card material-content">${topic.content}</div>
-      <button class="btn btn-filled mt-4" onclick="Materi.finish('${topic.title}', ${topic.xp})">✅ Selesai Membaca (+${topic.xp} XP)</button>
+      <button class="btn btn-filled mt-4" onclick="Materi.finish('${safeTitle}', ${topic.xp})">✅ Selesai Membaca (+${topic.xp} XP)</button>
     `;
     document.getElementById('topic-detail-content').innerHTML = content;
   },
@@ -442,7 +458,7 @@ const Quiz = {
     this.questions = pool.sort(() => 0.5 - Math.random()).slice(0, count);
     this.currentIndex = 0;
     this.score = 0;
-    this.timeLeft = count * 60; // 1 menit per soal
+    this.timeLeft = count * 60;
     
     document.getElementById('quiz-select-view').classList.add('hidden');
     document.getElementById('quiz-active-view').classList.remove('hidden');
@@ -511,7 +527,6 @@ const Quiz = {
       AudioSystem.success();
     } else {
       el.classList.add('wrong');
-      // Highlight correct answer
       document.querySelectorAll('.quiz-option').forEach(btn => {
         if(btn.textContent.includes(q.answer)) btn.classList.add('correct');
       });
@@ -530,7 +545,6 @@ const Quiz = {
     expEl.classList.remove('hidden');
     expEl.innerHTML = `<strong>Jawaban referensi:</strong><br>${q.explanation}`;
     
-    // Simple logic check for essay
     let isCorrect = q.answer.split(' ').some(word => ans.includes(word));
     
     if(isCorrect) { this.score += q.points; AudioSystem.success(); }
@@ -573,7 +587,7 @@ const Quiz = {
     
     State.history.quizzes.unshift({ date: new Date().toISOString(), score: percentage, points: this.score });
     Utils.saveDB();
-    if(percentage === 100) Badges.checkAll(); // trigger perfect quiz badge
+    if(percentage === 100) Badges.checkAll();
   },
   
   restart() { this.start(); },
@@ -650,7 +664,6 @@ const Games = {
       
       const secondId = this.memCards[idx].id;
       if(this.firstCard.id === secondId) {
-        // Match
         el.classList.add('matched');
         this.firstCard.el.classList.add('matched');
         this.firstCard = null;
@@ -668,7 +681,6 @@ const Games = {
           }, 500);
         }
       } else {
-        // No Match
         const fc = this.firstCard.el;
         this.firstCard = null;
         setTimeout(() => {
@@ -902,7 +914,6 @@ const DeepLearning = {
   },
   exportPDF() {
     Utils.showToast('Fitur Export PDF menggunakan jsPDF (Simulasi)', 'info');
-    // Implementasi real jsPDF bisa ditambahkan di sini
   }
 };
 
@@ -1011,14 +1022,12 @@ const Stats = {
   renderCharts() {
     const commonOpts = { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } };
     
-    // XP Chart (Dummy trend + current)
     new Chart(document.getElementById('chart-xp'), {
       type: 'line',
       data: { labels: ['Sen','Sel','Rab','Kam','Jum','Sab','Min'], datasets: [{ data: [10,30,45,60,80,100, State.user.xp % 150], borderColor: '#2563EB', tension: 0.4 }] },
       options: commonOpts
     });
     
-    // Subjects Chart
     new Chart(document.getElementById('chart-subjects'), {
       type: 'doughnut',
       data: { labels: ['Matematika', 'IPA', 'B. Indo'], datasets: [{ data: [40, 30, 30], backgroundColor: ['#2563EB', '#22C55E', '#F59E0B'] }] },
@@ -1044,7 +1053,6 @@ const Journal = {
   },
   loadToday() {
     document.getElementById('journal-today-date').textContent = Utils.formatDate(new Date().toISOString());
-    // Clear inputs
     ['j-today-learn','j-understood','j-difficult','j-tomorrow','j-target'].forEach(id => document.getElementById(id).value = '');
     this.currentMood = null;
     document.querySelectorAll('.mood-item').forEach(e => e.classList.remove('selected'));
@@ -1108,7 +1116,6 @@ const Certificate = {
     document.getElementById('cert-date-display').textContent = Utils.formatDate(new Date().toISOString());
     document.getElementById('cert-number-display').textContent = `No: DLSD-${Date.now()}`;
     
-    // Generate QR
     document.getElementById('cert-qr').innerHTML = '';
     new QRCode(document.getElementById('cert-qr'), { text: `Sertifikat ${State.user.name}`, width: 80, height: 80 });
     
@@ -1182,6 +1189,26 @@ const Settings = {
     if(confirm('Yakin ingin mereset semua data? Proses ini tidak dapat dibatalkan.')) Utils.resetDB();
   }
 };
+
+// ============================================================
+// EXPOSE MODULES TO GLOBAL SCOPE (WINDOW)
+// ============================================================
+window.App = App;
+window.Materi = Materi;
+window.Quiz = Quiz;
+window.Games = Games;
+window.AITutor = AITutor;
+window.DeepLearning = DeepLearning;
+window.Portfolio = Portfolio;
+window.Badges = Badges;
+window.Leaderboard = Leaderboard;
+window.Stats = Stats;
+window.Journal = Journal;
+window.Calendar = Calendar;
+window.Certificate = Certificate;
+window.Target = Target;
+window.Settings = Settings;
+window.Utils = Utils;
 
 // Start App
 window.onload = () => App.init();
