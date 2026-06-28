@@ -1,16 +1,17 @@
 // ============================================================
 // SERVICE WORKER - Deep Learning SD
-// Versi: 1.0.0
+// Versi: 1.0.1 (Bug Fix Cache Data)
 // Fungsi: Cache aset untuk offline mode dan PWA
 // ============================================================
 
-const CACHE_NAME = 'deep-learning-sd-v1';
+const CACHE_NAME = 'deep-learning-sd-v1.1'; // Versi cache dinaikkan untuk force update
 const STATIC_ASSETS = [
   './',
   './index.html',
   './style.css',
   './script.js',
   './manifest.json',
+  './assets/data/data.js', // FIX: Data materi dan soal ditambahkan ke cache
   'https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js',
   'https://html2canvas.hertzen.com/dist/html2canvas.min.js',
@@ -51,25 +52,20 @@ self.addEventListener('activate', (event) => {
 
 // ---- Fetch Event: Strategi Cache First, lalu Network ----
 self.addEventListener('fetch', (event) => {
-  // Skip non-GET requests
   if (event.request.method !== 'GET') return;
 
   event.respondWith(
     caches.match(event.request).then((cachedResponse) => {
       if (cachedResponse) {
-        // Kembalikan dari cache
         return cachedResponse;
       }
-      // Tidak ada di cache, fetch dari network
       return fetch(event.request).then((networkResponse) => {
-        // Clone response karena stream hanya bisa dibaca sekali
         const responseClone = networkResponse.clone();
         caches.open(CACHE_NAME).then((cache) => {
           cache.put(event.request, responseClone);
         });
         return networkResponse;
       }).catch(() => {
-        // Offline fallback untuk halaman HTML
         if (event.request.destination === 'document') {
           return caches.match('./index.html');
         }
