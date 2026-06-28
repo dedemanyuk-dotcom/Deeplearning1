@@ -1,7 +1,7 @@
 // ============================================================
 // SCRIPT.JS - Deep Learning SD
 // Deskripsi: Logika Utama Aplikasi (Vanilla JS)
-// Versi: 1.0.4 (Fix Validasi Game, Audio Crash, & QRCode Sertifikat)
+// Versi: 1.0.5 (FINAL BUG FIX - Game, Quiz Stats, & Data Merge)
 // ============================================================
 
 // --- STATE MANAGEMENT (Local Storage) ---
@@ -26,12 +26,12 @@ const AudioSystem = {
         const AudioCtx = window.AudioContext || window.webkitAudioContext;
         if(AudioCtx) this.ctx = new AudioCtx();
       }
-    } catch(e) { console.warn("Audio tidak didukung di browser ini."); }
+    } catch(e) { console.warn("Audio tidak didukung."); }
   },
   play(freq, type, duration) {
     if (!State.settings.sfx) return;
     this.init();
-    if (!this.ctx) return;
+    if (!this.ctx || this.ctx.state === 'suspended') return; // Cegah error jika diblokir browser
     try {
       const osc = this.ctx.createOscillator();
       const gain = this.ctx.createGain();
@@ -43,7 +43,7 @@ const AudioSystem = {
       gain.connect(this.ctx.destination);
       osc.start();
       osc.stop(this.ctx.currentTime + duration);
-    } catch(e) {} // Abaikan jika audio terblokir
+    } catch(e) {} 
   },
   success() { this.play(600, 'sine', 0.1); setTimeout(() => this.play(800, 'sine', 0.2), 100); },
   error() { this.play(300, 'square', 0.1); setTimeout(() => this.play(250, 'square', 0.2), 150); },
@@ -54,8 +54,18 @@ const AudioSystem = {
 const Utils = {
   saveDB() { localStorage.setItem(DB_KEY, JSON.stringify(State)); },
   loadDB() { 
-    const data = localStorage.getItem(DB_KEY); 
-    if (data) State = { ...State, ...JSON.parse(data) }; 
+    try {
+      const data = localStorage.getItem(DB_KEY); 
+      if (data) {
+        const parsed = JSON.parse(data);
+        // FIX: Gunakan penggabungan mendalam (Deep Merge) agar data tidak tertimpa sebagian
+        if (parsed.user) State.user = { ...State.user, ...parsed.user };
+        if (parsed.stats) State.stats = { ...State.stats, ...parsed.stats };
+        if (parsed.history) State.history = { ...State.history, ...parsed.history };
+        if (parsed.settings) State.settings = { ...State.settings, ...parsed.settings };
+        if (parsed.badges) State.badges = parsed.badges;
+      }
+    } catch(e) { console.error('Gagal memuat DB', e); }
   },
   resetDB() { localStorage.removeItem(DB_KEY); location.reload(); },
   formatDate(isoString) {
@@ -153,7 +163,7 @@ const App = {
 
   checkStreak() {
     const today = new Date().setHours(0,0,0,0);
-    const last = new Date(State.user.lastLogin).setHours(0,0,0,0);
+    const last = new Date(State.user.lastLogin || new Date()).setHours(0,0,0,0);
     const diff = (today - last) / (1000 * 60 * 60 * 24);
 
     if (diff === 1) { State.user.streak++; State.stats.daysActive++; }
@@ -172,7 +182,8 @@ const App = {
     if(activeNav) activeNav.classList.add('active');
 
     document.querySelectorAll('.page').forEach(el => el.classList.remove('active'));
-    document.getElementById(`page-${pageId}`).classList.add('active');
+    const targetPage = document.getElementById(`page-${pageId}`);
+    if(targetPage) targetPage.classList.add('active');
     window.scrollTo(0,0);
 
     if(pageId === 'dashboard') this.updateDashboard();
@@ -198,7 +209,8 @@ const App = {
 
   applySettings() {
     document.documentElement.setAttribute('data-theme', State.settings.darkMode ? 'dark' : 'light');
-    document.getElementById('theme-btn').textContent = State.settings.darkMode ? '☀️' : '🌙';
+    const themeBtn = document.getElementById('theme-btn');
+    if(themeBtn) themeBtn.textContent = State.settings.darkMode ? '☀️' : '🌙';
   },
 
   toggleTheme() {
@@ -258,7 +270,11 @@ const App = {
     const xpBase = lvObj.minXP; const xpReq = lvObj.maxXP;
     const progress = Math.min(100, ((u.xp - xpBase) / (xpReq - xpBase)) * 100);
     
-    ['dash-xp-bar', 'sidebar-xp-bar'].forEach(id => document.getElementById(id).style.width = `${progress}%`);
+    ['dash-xp-bar', 'sidebar-xp-bar'].forEach(id => {
+      const el = document.getElementById(id);
+      if(el) el.style.width = `${progress}%`;
+    });
+    
     document.getElementById('dash-level-name').textContent = `Level ${lvObj.level} ${lvObj.emoji}`;
     document.getElementById('sidebar-level').textContent = `Level ${lvObj.level} ${lvObj.emoji}`;
     document.getElementById('dash-xp-info').textContent = `${u.xp} / ${xpReq} XP`;
@@ -370,6 +386,8 @@ const Materi = {
 
 const Quiz = {
   questions: [], currentIndex: 0, score: 0, timer: null, timeLeft: 0,
+  correctCount: 0, wrongCount: 0, startTotalTime: 0, // FIX: Menyimpan statistik hasil kuis
+
   init() {
     document.getElementById('quiz-subject-filter').innerHTML = `<option value="all">Semua Pelajaran</option>` + 
       APP_DATA.subjects.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
@@ -382,7 +400,8 @@ const Quiz = {
     if(pool.length === 0) return Utils.showToast('Belum ada soal untuk materi ini', 'error');
     
     this.questions = pool.sort(() => 0.5 - Math.random()).slice(0, count);
-    this.currentIndex = 0; this.score = 0; this.timeLeft = count * 60;
+    this.currentIndex = 0; this.score = 0; this.correctCount = 0; this.wrongCount = 0;
+    this.timeLeft = count * 60; this.startTotalTime = this.timeLeft;
     
     document.getElementById('quiz-select-view').classList.add('hidden');
     document.getElementById('quiz-active-view').classList.remove('hidden');
@@ -435,9 +454,9 @@ const Quiz = {
     expEl.innerHTML = `<strong>Jawaban: ${q.answer}</strong><br>${q.explanation}`;
     
     if (ans === q.answer) {
-      el.classList.add('correct'); this.score += q.points; AudioSystem.success();
+      el.classList.add('correct'); this.score += q.points; this.correctCount++; AudioSystem.success();
     } else {
-      el.classList.add('wrong');
+      el.classList.add('wrong'); this.wrongCount++;
       document.querySelectorAll('.quiz-option').forEach(btn => { if(btn.textContent.includes(q.answer)) btn.classList.add('correct'); });
       AudioSystem.error();
     }
@@ -446,7 +465,8 @@ const Quiz = {
     document.getElementById('quiz-skip-btn').classList.add('hidden');
   },
   checkEssay() {
-    const ans = document.getElementById('quiz-essay-ans').value.toLowerCase().trim();
+    const input = document.getElementById('quiz-essay-ans');
+    const ans = input.value.toLowerCase().trim();
     if (!ans) return Utils.showToast('Isi jawabanmu dulu ya!', 'warning');
 
     const q = this.questions[this.currentIndex];
@@ -455,7 +475,8 @@ const Quiz = {
     expEl.innerHTML = `<strong>Jawaban referensi:</strong><br>${q.explanation}`;
     
     let isCorrect = q.answer.split(' ').some(word => ans.includes(word));
-    if(isCorrect) { this.score += q.points; AudioSystem.success(); } else { AudioSystem.error(); }
+    if(isCorrect) { this.score += q.points; this.correctCount++; AudioSystem.success(); } 
+    else { this.wrongCount++; AudioSystem.error(); }
     
     document.getElementById('quiz-score-info').textContent = `⭐ ${this.score} poin`;
     document.getElementById('quiz-next-btn').classList.remove('hidden');
@@ -474,9 +495,16 @@ const Quiz = {
     const maxScore = this.questions.reduce((a,b)=>a+b.points, 0);
     const percentage = Math.round((this.score / maxScore) * 100);
     
+    // FIX: Tampilkan statistik hasil
     document.getElementById('result-score').textContent = percentage;
     document.getElementById('result-total').textContent = this.questions.length;
     document.getElementById('result-points').textContent = this.score;
+    document.getElementById('result-correct').textContent = this.correctCount;
+    document.getElementById('result-wrong').textContent = this.wrongCount;
+    
+    const timeSpent = this.startTotalTime - Math.max(0, this.timeLeft);
+    const mins = Math.floor(timeSpent / 60); const secs = timeSpent % 60;
+    document.getElementById('result-time').textContent = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
     
     let msg = 'Luar Biasa!'; let emoji = '🎉';
     if(percentage < 50) { msg = 'Terus Belajar!'; emoji = '📚'; } else if(percentage < 80) { msg = 'Kerja Bagus!'; emoji = '👍'; }
@@ -517,14 +545,14 @@ const Games = {
   },
   
   // -- MEMORY GAME --
-  memCards: [], firstCard: null, memMoves: 0, memPairs: 0,
+  memCards: [], firstCard: null, memMoves: 0, memPairs: 0, isFlipping: false, // FIX: Kunci klik ganda
   startMemory() {
     document.getElementById('games-select-view').classList.add('hidden');
     document.getElementById('game-memory-view').classList.remove('hidden');
     this.memoryReset();
   },
   memoryReset() {
-    this.memMoves = 0; this.memPairs = 0; this.firstCard = null;
+    this.memMoves = 0; this.memPairs = 0; this.firstCard = null; this.isFlipping = false;
     document.getElementById('mem-moves').textContent = 0; document.getElementById('mem-pairs').textContent = 0;
     
     let cards = [...APP_DATA.memoryCards, ...APP_DATA.memoryCards];
@@ -535,18 +563,24 @@ const Games = {
     `).join('');
   },
   memFlip(idx) {
+    if(this.isFlipping) return; // Mencegah klik cepat berlebihan (bug kartu stuck)
     const el = document.getElementById(`mem-c-${idx}`);
-    if(el.classList.contains('flipped') || el.classList.contains('matched')) return;
+    if(!el || el.classList.contains('flipped') || el.classList.contains('matched')) return;
+    
     el.classList.add('flipped'); AudioSystem.click();
     
     if(!this.firstCard) {
       this.firstCard = { idx, el, id: this.memCards[idx].id };
     } else {
+      this.isFlipping = true; 
       this.memMoves++; document.getElementById('mem-moves').textContent = this.memMoves;
       const secondId = this.memCards[idx].id;
+      
       if(this.firstCard.id === secondId) {
         el.classList.add('matched'); this.firstCard.el.classList.add('matched'); this.firstCard = null;
-        this.memPairs++; document.getElementById('mem-pairs').textContent = this.memPairs; AudioSystem.success();
+        this.memPairs++; this.isFlipping = false;
+        document.getElementById('mem-pairs').textContent = this.memPairs; AudioSystem.success();
+        
         if(this.memPairs === APP_DATA.memoryCards.length) {
           setTimeout(() => {
             Utils.confetti(); const xp = 50 - (this.memMoves > 15 ? (this.memMoves-15) : 0);
@@ -556,7 +590,7 @@ const Games = {
         }
       } else {
         const fc = this.firstCard.el; this.firstCard = null;
-        setTimeout(() => { el.classList.remove('flipped'); fc.classList.remove('flipped'); }, 800);
+        setTimeout(() => { el.classList.remove('flipped'); fc.classList.remove('flipped'); this.isFlipping = false; }, 800);
       }
     }
   },
@@ -570,6 +604,10 @@ const Games = {
     document.getElementById('math-score').textContent = 0;
     document.getElementById('math-streak-count').textContent = 0;
     document.getElementById('math-feedback').textContent = '';
+    
+    // FIX: Tambah Event Enter Keyboard
+    const inputEl = document.getElementById('math-input');
+    inputEl.onkeydown = (e) => { if(e.key === 'Enter') this.mathCheck(); };
     this.nextMath();
     
     clearInterval(this.mathTimerInterval);
@@ -595,7 +633,6 @@ const Games = {
     const ans = parseInt(inputEl.value);
     const fb = document.getElementById('math-feedback');
     
-    // FIX: Validasi jika jawaban kosong
     if(isNaN(ans)) {
         fb.textContent = '⚠️ Ketik angkanya dulu!';
         fb.style.color = 'var(--warning)';
@@ -621,6 +658,10 @@ const Games = {
     document.getElementById('games-select-view').classList.add('hidden');
     document.getElementById('game-word-view').classList.remove('hidden');
     this.wordScore = 0; this.wordQ = 1; document.getElementById('word-score').textContent = 0;
+    
+    // FIX: Tambah Event Enter Keyboard
+    const inputEl = document.getElementById('word-input');
+    inputEl.onkeydown = (e) => { if(e.key === 'Enter') this.wordCheck(); };
     this.nextWord();
   },
   nextWord() {
@@ -642,7 +683,6 @@ const Games = {
     const ans = inputEl.value.toUpperCase().trim();
     const fb = document.getElementById('word-feedback');
     
-    // FIX: Validasi jika teks kosong
     if(!ans) {
         fb.textContent = '⚠️ Ketik kata yang kamu tebak dulu!';
         fb.style.color = 'var(--warning)';
@@ -739,6 +779,7 @@ const DeepLearning = {
 const Portfolio = {
   init() { this.tab('quiz', document.querySelector('.tabs .tab-item')); },
   tab(type, el) {
+    if(!el) return;
     document.querySelectorAll('#page-portfolio .tab-item').forEach(e => e.classList.remove('active')); el.classList.add('active');
     const cont = document.getElementById('portfolio-content');
     const data = State.history.activities.filter(a => type === 'dl' ? a.type === 'dl' : a.type === type);
@@ -786,6 +827,7 @@ const Leaderboard = {
   ],
   init() { this.tab('xp', document.querySelector('#page-leaderboard .tab-item')); },
   tab(sortKey, el) {
+    if(!el) return;
     document.querySelectorAll('#page-leaderboard .tab-item').forEach(e => e.classList.remove('active')); el.classList.add('active');
     let list = [...this.mockData, { ...State.user, isMe: true }]; list.sort((a,b) => b[sortKey] - a[sortKey]);
     document.getElementById('leaderboard-list').innerHTML = list.map((u, i) => `
@@ -814,6 +856,7 @@ const Journal = {
   currentMood: null,
   init() { this.tab('tulis', document.querySelector('#page-journal .tab-item')); this.loadToday(); },
   tab(view, el) {
+    if(!el) return;
     document.querySelectorAll('#page-journal .tab-item').forEach(e => e.classList.remove('active')); el.classList.add('active');
     document.getElementById('journal-tulis-view').classList.toggle('hidden', view !== 'tulis'); document.getElementById('journal-riwayat-view').classList.toggle('hidden', view !== 'riwayat');
     if(view === 'riwayat') this.renderHistory();
@@ -869,7 +912,6 @@ const Certificate = {
     document.getElementById('cert-date-display').textContent = Utils.formatDate(new Date().toISOString());
     document.getElementById('cert-number-display').textContent = `No: DLSD-${Date.now()}`;
     
-    // FIX: Cegah Error jika CDN QRCode tidak meload
     const qrContainer = document.getElementById('cert-qr');
     qrContainer.innerHTML = ''; 
     try {
@@ -878,9 +920,7 @@ const Certificate = {
       } else {
         qrContainer.innerHTML = '<div style="font-size:10px; border:2px solid var(--primary); padding:10px; text-align:center;">Verified By<br>DL SD</div>';
       }
-    } catch(e) {
-      console.warn("QR Error:", e);
-    }
+    } catch(e) { console.warn("QR Error:", e); }
     
     document.getElementById('certificate-preview').classList.remove('hidden');
     Utils.showToast('Sertifikat berhasil dibuat!', 'success');
@@ -892,6 +932,7 @@ const Certificate = {
 const Target = {
   init() { this.tab('harian', document.querySelector('#page-target .tab-item')); },
   tab(type, el) {
+    if(!el) return;
     document.querySelectorAll('#page-target .tab-item').forEach(e => e.classList.remove('active')); el.classList.add('active');
     document.getElementById('target-content').innerHTML = `<div class="card"><div class="checklist-item done"><div class="checklist-checkbox">✓</div><div class="checklist-label">Target 1 (${type})</div></div><div class="checklist-item"><div class="checklist-checkbox"></div><div class="checklist-label">Target 2 (${type})</div></div></div>`;
   }
