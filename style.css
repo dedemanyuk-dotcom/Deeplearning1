@@ -308,7 +308,8 @@ body {
   min-height: 100vh;
 }
 
-#app.active { display: block; }
+#app.active { display: block !important; }
+
 
 /* Header */
 .app-header {
